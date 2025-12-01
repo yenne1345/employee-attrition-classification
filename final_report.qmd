@@ -1,0 +1,407 @@
+---
+title: "Employee Attrition – Multiclass Classification Analysis"
+author: "Yen Nguyen"
+institute: "Denison University"
+format: 
+  html:
+    theme: lux 
+    code-tools: true
+    code-fold: true
+    code-summary: "Code"
+    code-copy: hover
+    link-external-newwindow: true
+    tbl-cap-location: top
+    fig-cap-location: bottom
+
+self-contained: true
+editor: source
+---
+
+```{r setup, include=FALSE}
+# DO NOT EDIT THIS
+
+knitr::opts_chunk$set(fig.align = 'center')
+knitr::opts_chunk$set(out.width = '90%')
+knitr::opts_chunk$set(results = 'hold')
+knitr::opts_chunk$set(fig.show = 'hold')
+knitr::opts_chunk$set(error = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+par(mar = c(4.1, 4.1, 1.1, 4.1))
+
+hooks = knitr::knit_hooks$get()
+hook_foldable = function(type) {
+  force(type)
+  function(x, options) {
+    res = hooks[[type]](x, options)
+    
+    if (isFALSE(options[[paste0("fold.", type)]])) return(res)
+    
+    paste0(
+      "<details open><summary>", gsub("^p", "P", gsub("^o", "O", type)), "</summary>\n\n",
+      res,
+      "\n\n</details>"
+    )
+  }
+}
+
+knitr::knit_hooks$set(
+  output = hook_foldable("output"),
+  plot = hook_foldable("plot")
+)
+
+Q <- 0
+```
+
+```{r, include = FALSE}
+# Load libraries
+library(tidyverse)
+library(ggplot2)
+library(naniar)   # for missingness visualization
+library(readr)
+library(gridExtra)
+data <- read.csv("data/survey_results_public.csv")
+```
+
+## `r Q <- Q+1; Q`. Introduction
+
+### Data
+
+### Methodology
+
+## `r Q <- Q+1; Q`. Ethical considerations
+
+## `r Q <- Q+1; Q`. Data Cleaning
+
+### Variable selection
+
+To build an effective multi-class attrition prediction model, I selected a focused set of predictors that are theoretically and empirically linked to employee turnover. The variables retained include demographic factors (Age, Country, Education Level), job-related attributes (Employment type, Industry, Organization size, Remote work status,Role Type, Developer type), work experience (Years of coding or work experience), compensation (annual converted salary), and key attitudinal measures such as job satisfaction and perceived AI-related job threat. These features are informative, low in dimensionality, and appropriate for algorithms such as k-Nearest Neighbors, tree-based models, and Naive Bayes. I excluded high-dimensional or sparsely populated multi-select variables—such as technology stacks, programming languages, and platform preferences—because they add noise without improving predictive signal and can degrade model performance, especially for distance-based or probabilistic classifiers. This final predictor set balances interpretability, model stability, and computational efficiency.
+
+```{r}
+data <- data %>% select(
+  "ResponseId",
+  
+  # Demographics
+  "Age", "Country", "EdLevel",
+  
+  # Work experience
+  "WorkExp", "YearsCode", 
+  
+  # Job context
+  "DevType", "Employment", "OrgSize", "Industry", "ICorPM", "RemoteWork",
+  
+  # Satisfaction & Perception
+  "JobSat", "AIThreat",
+  
+  # Compensation
+  "ConvertedCompYearly",
+  
+  # Target
+  "NewRole"
+)
+```
+
+### Data Cleaning
+
+We converted key variables to appropriate numeric or categorical types, standardized category orders, and shortened lengthy factor labels to improve readability and consistency throughout the analysis.
+
+```{r}
+data <- data %>%
+  mutate(
+    # Numeric conversions
+    WorkExp = as.numeric(WorkExp),
+    YearsCode = as.numeric(YearsCode),
+    CompTotal = as.numeric(ConvertedCompYearly),
+    JobSat = as.numeric(JobSat),
+
+    # -----------------------------
+    # Age (ordered)
+    # -----------------------------
+    Age = factor(case_when(
+      Age == "18-24 years old" ~ "18-24",
+      Age == "25-34 years old" ~ "25-34",
+      Age == "35-44 years old" ~ "35-44",
+      Age == "45-54 years old" ~ "45-54",
+      Age == "55-64 years old" ~ "55-64",
+      Age == "65 years or older" ~ "65+",
+      Age == "Prefer not to say" ~ "Prefer not to say",
+      TRUE ~ as.character(Age)
+    ),
+    levels = c("18-24","25-34","35-44","45-54","55-64","65+","Prefer not to say")
+    ),
+
+    # -----------------------------
+    # Education Level (ordered)
+    # -----------------------------
+    EdLevel = factor(case_when(
+      EdLevel == "Master’s degree (M.A., M.S., M.Eng., MBA, etc.)" ~ "Master",
+      EdLevel == "Associate degree (A.A., A.S., etc.)" ~ "Associate",
+      EdLevel == "Bachelor’s degree (B.A., B.S., B.Eng., etc.)" ~ "Bachelor",
+      EdLevel == "Some college/university study without earning a degree" ~ "Some College",
+      EdLevel == "Professional degree (JD, MD, Ph.D, Ed.D, etc.)" ~ "Professional",
+      EdLevel == "Secondary school (e.g. high school)" ~ "Secondary",
+      EdLevel == "Primary/elementary school" ~ "Primary",
+      EdLevel == "Other (please specify):" ~ "Other",
+      TRUE ~ as.character(EdLevel)
+    ),
+    levels = c("Primary","Secondary","Some College","Associate","Bachelor","Master","Professional","Other")
+    ),
+
+    # -----------------------------
+    # Employment
+    # -----------------------------
+    Employment = factor(case_when(
+      Employment == "Employed" ~ "Employed",
+      Employment == "Independent contractor, freelancer, or self-employed" ~ "Contractor/Freelancer",
+      Employment == "Student" ~ "Student",
+      Employment == "Retired" ~ "Retired",
+      Employment == "Not employed" ~ "Not employed",
+      Employment == "I prefer not to say" ~ "Prefer not to say",
+      TRUE ~ as.character(Employment)
+    )),
+
+    # -----------------------------
+    # OrgSize (ordered)
+    # -----------------------------
+    OrgSize = factor(case_when(
+      OrgSize == "Less than 20 employees" ~ "<20",
+      OrgSize == "20 to 99 employees" ~ "20-99",
+      OrgSize == "100 to 499 employees" ~ "100-499",
+      OrgSize == "500 to 999 employees" ~ "500-999",
+      OrgSize == "1,000 to 4,999 employees" ~ "1k-4.9k",
+      OrgSize == "5,000 to 9,999 employees" ~ "5k-9.9k",
+      OrgSize == "10,000 or more employees" ~ "10k+",
+      OrgSize == "Just me - I am a freelancer, sole proprietor, etc." ~ "Solo/Freelancer",
+      OrgSize == "I don’t know" ~ "Unknown",
+      TRUE ~ as.character(OrgSize)
+    ),
+    levels = c("<20","20-99","100-499","500-999","1k-4.9k","5k-9.9k","10k+","Solo/Freelancer","Unknown")
+    ),
+
+    # -----------------------------
+    # Remote Work (ordered)
+    # -----------------------------
+    RemoteWork = factor(case_when(
+      RemoteWork == "Remote" ~ "Remote",
+      RemoteWork == "In-person" ~ "In-person",
+      RemoteWork == "Hybrid (some in-person, leans heavy to flexibility)" ~ "Hybrid (flex remote)",
+      RemoteWork == "Hybrid (some remote, leans heavy to in-person)" ~ "Hybrid (flex in-person)",
+      RemoteWork == "Your choice (very flexible, you can come in when you want or just as needed)" ~ "Flexible Choice",
+      TRUE ~ as.character(RemoteWork)
+    ),
+    levels = c("In-person","Hybrid (flex in-person)","Hybrid (flex remote)","Remote","Flexible Choice")
+    ),
+
+    # -----------------------------
+    # Other categories
+    # -----------------------------
+    ICorPM = factor(ICorPM),
+    AIThreat = factor(AIThreat, levels = c("No", "Yes", "I'm not sure")),
+
+    # -----------------------------
+    # NewRole (target variable)
+    # -----------------------------
+    NewRole = factor(case_when(
+      NewRole == "I have neither consider or transitioned into a new career or industry" ~ "No Change",
+      NewRole == "I have transitioned into a new career and/or industry voluntarily" ~ "Voluntary Transition",
+      NewRole == "I have transitioned into a new career and/or industry involuntarily" ~ "Involuntary Transition",
+      NewRole == "I have somewhat considered changing my career..." ~ "Somewhat Considered",
+      NewRole == "I have strongly considered changing my career..." ~ "Strongly Considered",
+      TRUE ~ as.character(NewRole)
+    ),
+    levels = c("No Change","Somewhat Considered","Strongly Considered","Voluntary Transition","Involuntary Transition")
+    )
+  )
+
+```
+
+
+## `r Q <- Q+1; Q`. Data exploration
+
+We first examined the dataset to understand the distribution, missing values, and basic relationships among variables relevant for predicting employee attrition. Continuous variables such as age, years of coding experience, and annual compensation were summarized for central tendency and spread, while categorical variables like employment type, industry, and remote work status were inspected for frequency and levels. Missing values and class imbalance in the target variable (`NewRole`) were identified, guiding preprocessing and model selection.
+
+### Target Variable Distribution
+
+The distribution of career change (`NewRole`) shows that most respondents have not changed careers, while a substantial portion is considering a transition. Actual voluntary or involuntary transitions are less common.
+
+For clearer analysis, the target variable `NewRole` is recoded into three categories:
+
+- No Change: Respondents who have not considered or transitioned careers.
+
+- Considered: Respondents who have somewhat or strongly considered changing careers.
+
+- Transitioned: Respondents who have actually transitioned, either voluntarily or involuntarily.
+
+
+```{r}
+# Recode NewRole into 3 categories
+
+data <- data %>%
+  mutate(NewRole_3cat = case_when(
+    NewRole %in% c("Somewhat Considered", "Strongly Considered") ~ "Considered",
+    NewRole %in% c("Voluntary Transition", "Involuntary Transition") ~ "Transitioned",
+    NewRole == "No Change" ~ "No Change", TRUE ~ NA_character_
+))
+
+# Plot 3-category distribution
+
+data %>%
+  count(NewRole_3cat) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = reorder(NewRole_3cat, prop), y = prop, fill = NewRole_3cat)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Distribution of Career Change (3-Category Target)",
+       x = "Career Change Status", y = "Proportion") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+From the bar plot:
+
+- No Change is the most common category (~33%), indicating many respondents have not considered or transitioned careers.
+
+- Considered accounts for a significant portion (~32%), showing that a substantial fraction of respondents are contemplating career changes.
+
+- Transitioned is less frequent (~8%), reflecting that actual career transitions are rarer than considerations.
+
+- Approximately 30% of the data are missing (NA).
+
+Overall, the distribution is skewed toward stable careers (No Change), suggesting more respondents have not pursued career changes than those who have considered or actually transitioned.
+
+### Continuous Variables
+
+We examined continuous variables to understand respondents’ professional experience, coding experience, compensation, and job satisfaction. These variables provide insight into potential factors that may influence career change decisions.
+
+```{r}
+continuous_vars <- c("WorkExp", "YearsCode", "CompTotal", "JobSat")
+data %>% 
+  select(all_of(continuous_vars)) %>%
+  gather(key = "variable", value = "value") %>%
+  filter(!is.na(value)) %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Distribution of Continuous Predictors") +
+  theme_minimal()
+
+# Log-transformed salary 
+data %>% 
+  filter(!is.na(CompTotal) & CompTotal > 0) %>% 
+  ggplot(aes(x = log(CompTotal))) +
+  geom_histogram(bins = 30, fill = "darkblue", color = "white") + 
+  labs(title = "Log-Transformed Salary Distribution", 
+       x = "log(CompTotal)", y = "Count") + 
+  theme_minimal()
+```
+
+Continuous variables include `WorkExp` (years of professional experience), `YearsCode` (years coding), `CompTotal` (annual compensation), and `JobSat` (job satisfaction). Most respondents report 5–20 years of professional experience and 8–24 years of coding experience.
+
+Observations from the histograms:
+
+- `CompTotal` (annual compensation) is extremely right-skewed, with the majority earning under \$200k, but with some very large outliers. Because of this skewness, a log transformation is applied to make the distribution more suitable for modeling. After log-transformation, compensation clusters around a more interpretable center (roughly equivalent to salaries in the \$75k–\$120k range), reducing the influence of extreme salary outliers.
+
+- `JobSat` (job satisfaction on a 1–10 scale) is concentrated at the higher end, with a median of 8, suggesting that respondents tend to report positive satisfaction with their jobs.
+
+- `WorkExp` (years of professional experience) shows a heavily right-tailed distribution. Most respondents have between 5 and 20 years of work experience, with a small number reporting very long careers.
+
+- `YearsCode` exhibits a similar right-skewed pattern, with the majority falling between 8 and 24 years of programming experience. This indicates that many respondents began coding early relative to their professional careers.
+
+```{r}
+# Correlation matrix 
+numeric_vars <- data %>% 
+  select(all_of(continuous_vars)) %>% 
+  na.omit() 
+
+cor_matrix <- cor(numeric_vars) 
+print(cor_matrix)
+```
+
+The correlation matrix shows:
+
+- `WorkExp` and `YearsCode`: 0.89 (strong positive relationship), confirming that experience and coding longevity are closely linked.
+- Other correlations with `CompTotal` or `JobSat`: Weak (<0.1), suggesting that salary and job satisfaction are not strongly determined by years of experience or coding alone.
+
+Linking to career change: The skew toward mid- to high-experience respondents, coupled with generally high job satisfaction, may partly explain why the majority of respondents have not transitioned careers. Conversely, the subset considering or making transitions could reflect those with lower satisfaction or particular compensation levels, highlighting potential predictors for career mobility.
+
+### Categorical Variables
+
+Categorical variables describe demographic, educational, and workplace characteristics of respondents. Examining these variables helps contextualize career trajectories and potential predictors of career change.
+
+
+```{r}
+categorical_vars <- c("Age", "EdLevel", "Employment", "OrgSize", "ICorPM", "RemoteWork", "AIThreat")
+for(var in categorical_vars){
+  print(
+  ggplot(data, aes_string(x = var)) +
+    geom_bar(fill = "coral") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(title = paste("Frequency of", var)) +
+    theme_minimal()
+  )
+}
+```
+
+-   `Age`: Most respondents are between 25–44 years old, with fewer older professionals (65+) or those preferring not to disclose.
+
+-   `EdLevel` (Education Level): Majority hold a Bachelor’s or Master’s degree , followed by professional degrees and some college.
+
+-   `Employment`: Most are employed, with smaller fractions of contractors/freelancers, students, and others.
+
+-   `OrgSize` (Organization Size): Respondents are concentrated in small-to-medium companies (20–499 employees), with fewer in very large companies or solo/freelance.
+
+-   `ICorPM` (Individual contributor vs manager): Majority are individual contributors.
+
+-   `RemoteWork`: Mostly remote or hybrid options, reflecting flexible work arrangements.
+
+-   `AIThreat` Awareness: Responses are split, with a majority reporting No, followed by I'm not sure and Yes.
+
+
+```{r}
+top_n <- 10
+large_cats <- c("Country", "Industry", "DevType")
+for(var in large_cats){
+  top_values <- data %>%
+    filter(!is.na(.data[[var]])) %>%
+    count(.data[[var]]) %>%
+    top_n(top_n, n)
+  
+  print(
+  ggplot(top_values, aes(x = reorder(.data[[var]], n), y = n)) +
+    geom_bar(stat = "identity", fill = "darkgreen") +
+    coord_flip() +
+    labs(title = paste("Top", top_n, "categories in", var), y = "Count") +
+    theme_minimal()
+  )
+}
+
+```
+
+- `Country`: Most respondents come from the United States, Germany, India, the United Kingdom, France, and Canada, indicating a strong geographic concentration in major tech-active regions.
+
+- `Industry`: Responses are dominated by Software Development, Internet/Information Services, Telecommunications, FinTech, Banking/Financial Services, and Healthcare—showing that participants are primarily employed in tech-driven and professional sectors.
+
+- `DevType` (Developer Type): The most common roles include Full-Stack Developers, Back-End Developers, Front-End Developers, Software/Solutions Architects, and Students, reflecting a respondent pool centered around core development and engineering positions.
+
+### Summary Insight
+
+- Career change is considered by a substantial portion (~32%), but actual transitions (~8%) are less frequent; the majority (~33%) have not changed careers.
+
+- Respondents are primarily mid-career professionals with technical skills, employed in small-to-medium tech-related companies, and reporting relatively high job satisfaction.
+
+- Salary and job satisfaction show little correlation with experience or coding longevity, suggesting other factors influence these outcomes.
+
+- Respondents are geographically concentrated in major tech regions (US, India, Germany), working in software or IT-related sectors, mostly in developer roles.
+
+Overall, the dataset reflects a sample of stable, experienced, and technically skilled professionals, with a subset contemplating or undertaking career changes.
+
+## `r Q <- Q+1; Q`. Preprocessing
+
+
+## `r Q <- Q+1; Q`. Modeling
+
+## `r Q <- Q+1; Q`. Evaluation
+
+## `r Q <- Q+1; Q`. Conclusions & recommendations
+
+## `r Q <- Q+1; Q`.

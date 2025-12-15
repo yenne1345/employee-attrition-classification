@@ -1,5 +1,5 @@
 ---
-title: "Employee Attrition – Multiclass Classification Analysis"
+title: "Employee Attrition – Classification Analysis"
 author: "Yen Nguyen"
 institute: "Denison University"
 format: 
@@ -10,6 +10,8 @@ format:
     code-summary: "Code"
     code-copy: hover
     link-external-newwindow: true
+    toc: true
+    toc-depth: 3
     tbl-cap-location: top
     fig-cap-location: bottom
 
@@ -55,65 +57,107 @@ Q <- 0
 
 ```{r, include = FALSE}
 # Load libraries
-library(tidyverse)
 library(ggplot2)
-library(naniar)   # for missingness visualization
 library(readr)
 library(gridExtra)
+library(caret)
+library(klaR)
+library(pROC)
+library(tidyverse) 
+library(skimr)
+library(RColorBrewer)
+library(MLmetrics)
+library(randomForest)
+library(broom)
+library(DT)
+
 data <- read.csv("data/survey_results_public.csv")
 ```
 
 ## `r Q <- Q+1; Q`. Introduction
 
+Employee attrition refers to people leaving their jobs, either by switching roles, changing careers, or exiting an organization entirely. In this project, I focus on whether software developers are likely to consider or make a career change, using survey data from the Stack Overflow Developer Survey.
+
+This question is especially relevant in today’s tech labor market. Since the post-COVID massive layoffs from big tech companies, the industry has been really unstable. Meanwhile,  many developers continue to voluntarily switch roles due to burnout, dissatisfaction, and challenges with work–life balance. As a result, career mobility in tech is driven by both external shocks and individual preferences.
+
+Employee turnover is also extremely costly. In 2025, replacing a technical employee can cost anywhere from 50% to over 400% of their annual salary when accounting for hiring, onboarding, and lost productivity. For companies, being able to predict which employees are more likely to leave is not just academically interesting, but financially important. Early identification of attrition risk can help organizations intervene sooner, improve retention strategies, support employee well-being, and ultimately reduce replacement costs.
+
+Using demographic, job-related, compensation, and attitudinal factors, this project aims to identify patterns associated with developers’ likelihood of career change and explore how these characteristics relate to attrition risk.
+
+## `r Q <- Q+1; Q`. Data & Research Design
+
 ### Data
 
-### Methodology
+This project uses a dataset titled the Stack Overflow 2025 Developer Survey, which includes responses from over 49,000 developers across 177 countries sharing their information and perspectives. The full survey contains 172 variables covering a wide range of topics, including demographics, education, employment status, work environment, compensation, job satisfaction, and attitudes toward emerging technologies such as artificial intelligence and large language models.
 
-## `r Q <- Q+1; Q`. Ethical considerations
+For this analysis, I focus on a subset of variables that are most relevant to individual career decision-making. Restricting the dataset in this way helps reduce noise, improves model interpretability, and allows the analysis to focus on factors that are more directly related to whether a developer considers or makes a career change.
 
-## `r Q <- Q+1; Q`. Data Cleaning
+### Research Question
 
-### Variable selection
+Which factors predict whether a developer will consider or make a career change?
 
-To build an effective multi-class attrition prediction model, I selected a focused set of predictors that are theoretically and empirically linked to employee turnover. The variables retained include demographic factors (Age, Country, Education Level), job-related attributes (Employment type, Industry, Organization size, Remote work status,Role Type, Developer type), work experience (Years of coding or work experience), compensation (annual converted salary), and key attitudinal measures such as job satisfaction and perceived AI-related job threat. These features are informative, low in dimensionality, and appropriate for algorithms such as k-Nearest Neighbors, tree-based models, and Naive Bayes. I excluded high-dimensional or sparsely populated multi-select variables—such as technology stacks, programming languages, and platform preferences—because they add noise without improving predictive signal and can degrade model performance, especially for distance-based or probabilistic classifiers. This final predictor set balances interpretability, model stability, and computational efficiency.
+### Ethical considerations
+
+This analysis uses publicly available, anonymized survey data. No personally identifiable information is included, and all results are reported in aggregate. The models developed in this project are intended for exploratory and educational purposes only. While the goal is to identify patterns associated with career change, the results should not be interpreted as causal or used to make decisions about specific individuals. Care was taken to avoid reinforcing stereotypes or unfair assumptions about particular demographic or professional groups.
+
+## `r Q <- Q+1; Q`. Data Processing
+
+### Variable Selection
+
+To predict whether a developer is likely to consider or make a career change, I selected a set of variables that are both theoretically relevant and commonly discussed in prior research on employee mobility and attrition. Focusing on a targeted set of predictors helps to simplify the modeling process, improves interpretability, and reduces noise from overly complex or sparse features.
+
+The selected predictors fall into the following categories:
+
+-   Demographics: Age group (`Age`), education level(`EdLevel`)
+
+-   Job-related characteristics: Employment type (`Employment`), industry (`Industry`), organization size (`OrgSize`), work arrangement (remote, hybrid, in-person) (`RemoteWork`), role type (individual contributor vs. manager) (`ICorPM`), developer type (`DevType`), and number of distinct software tools regularly used at work (`ToolCountWork`)
+
+-   Experience: Years of professional work experience (`WorkExp`)
+
+-   Compensation: Annual salary (`ConvertedCompYearly`)
+
+-   Attitudinal measures: Job satisfaction (`JobSat`) and perceived AI-related job threat (`AIThreat`)
+
+I intentionally excluded high-dimensional or sparse multi-select variables such as country, detailed technology stacks, and programming languages. While these variables may capture important contextual differences, they often introduce strong structural effects and reduce model interpretability. Since this project focuses on individual career decision-making, the final set of variables prioritizes clarity and relevance over breadth.
 
 ```{r}
-data <- data %>% select(
-  "ResponseId",
-  
-  # Demographics
-  "Age", "Country", "EdLevel",
-  
-  # Work experience
-  "WorkExp", "YearsCode", 
-  
-  # Job context
-  "DevType", "Employment", "OrgSize", "Industry", "ICorPM", "RemoteWork",
-  
-  # Satisfaction & Perception
-  "JobSat", "AIThreat",
-  
-  # Compensation
-  "ConvertedCompYearly",
-  
-  # Target
-  "NewRole"
-)
+data <- data %>% dplyr::select("Age", "EdLevel", "WorkExp","DevType", "Employment", "OrgSize", "Industry", "ICorPM", "RemoteWork", "JobSat", "AIThreat", "ConvertedCompYearly", "ToolCountWork", "NewRole")
 ```
 
 ### Data Cleaning
 
-We converted key variables to appropriate numeric or categorical types, standardized category orders, and shortened lengthy factor labels to improve readability and consistency throughout the analysis.
+After selecting the relevant variables, I cleaned and transformed the data to ensure consistency and suitability for modeling. Variables were converted to appropriate numeric or categorical formats, factor levels were reordered where meaningful, and long labels were shortened for readability.
+
+Missing values were handled using median imputation for numeric variables and an “Unknown” category for categorical variables. This approach preserves observations while minimizing bias from deletion.
+
+One notable issue involved the `ToolCountWork` variable, which was collected as a free-response numeric field. Some respondents reported extremely large values (e.g., hundreds or thousands of tools), which are not realistic. To limit the influence of these outliers, values above 50 were capped at 50.
+
+Key transformations included:
+
+-   Age: Ordered from 18–24 through 65+
+
+-   Education level: Ordered from primary education to professional degrees
+
+-   Employment status, organization size, and remote work: Cleaned and consolidated into interpretable categories
+
+-   Target variable (`NewRole`): Recoded into a binary outcome
+
+The binary target variable captures whether a respondent is at risk of career change:
+
+-   No_Change: Respondents who have not considered or transitioned into a new career
+
+-   Change: Respondents who have somewhat considered, strongly considered, or already transitioned into a new career (voluntary or involuntary)
 
 ```{r}
 data <- data %>%
+  filter(!is.na(NewRole)) %>%
   mutate(
     # Numeric conversions
     WorkExp = as.numeric(WorkExp),
-    YearsCode = as.numeric(YearsCode),
-    CompTotal = as.numeric(ConvertedCompYearly),
+    ConvertedCompYearly = as.numeric(ConvertedCompYearly),
     JobSat = as.numeric(JobSat),
-
+    ToolCountWork = ifelse(ToolCountWork > 50, 50, ToolCountWork)
+,
     # -----------------------------
     # Age (ordered)
     # -----------------------------
@@ -144,7 +188,8 @@ data <- data %>%
       EdLevel == "Other (please specify):" ~ "Other",
       TRUE ~ as.character(EdLevel)
     ),
-    levels = c("Primary","Secondary","Some College","Associate","Bachelor","Master","Professional","Other")
+    levels = c("Primary","Secondary","Some College",
+               "Associate","Bachelor","Master","Professional","Other")
     ),
 
     # -----------------------------
@@ -196,87 +241,59 @@ data <- data %>%
     # Other categories
     # -----------------------------
     ICorPM = factor(ICorPM),
+    Industry = as.factor(Industry),
     AIThreat = factor(AIThreat, levels = c("No", "Yes", "I'm not sure")),
-
+    DevType = factor(DevType),
     # -----------------------------
     # NewRole (target variable)
     # -----------------------------
     NewRole = factor(case_when(
-      NewRole == "I have neither consider or transitioned into a new career or industry" ~ "No Change",
-      NewRole == "I have transitioned into a new career and/or industry voluntarily" ~ "Voluntary Transition",
-      NewRole == "I have transitioned into a new career and/or industry involuntarily" ~ "Involuntary Transition",
-      NewRole == "I have somewhat considered changing my career..." ~ "Somewhat Considered",
-      NewRole == "I have strongly considered changing my career..." ~ "Strongly Considered",
-      TRUE ~ as.character(NewRole)
-    ),
-    levels = c("No Change","Somewhat Considered","Strongly Considered","Voluntary Transition","Involuntary Transition")
+      NewRole == "I have neither consider or transitioned into a new career or industry" ~ "No_Change",
+      TRUE ~ "Change"    
+      ))
     )
-  )
-
 ```
 
-
-## `r Q <- Q+1; Q`. Data exploration
-
-We first examined the dataset to understand the distribution, missing values, and basic relationships among variables relevant for predicting employee attrition. Continuous variables such as age, years of coding experience, and annual compensation were summarized for central tendency and spread, while categorical variables like employment type, industry, and remote work status were inspected for frequency and levels. Missing values and class imbalance in the target variable (`NewRole`) were identified, guiding preprocessing and model selection.
+## `r Q <- Q+1; Q`. Data Exploration
 
 ### Target Variable Distribution
 
-The distribution of career change (`NewRole`) shows that most respondents have not changed careers, while a substantial portion is considering a transition. Actual voluntary or involuntary transitions are less common.
+We first look at the target variable, NewRole, which captures whether a developer has considered or made a career change.
 
-For clearer analysis, the target variable `NewRole` is recoded into three categories:
-
-- No Change: Respondents who have not considered or transitioned careers.
-
-- Considered: Respondents who have somewhat or strongly considered changing careers.
-
-- Transitioned: Respondents who have actually transitioned, either voluntarily or involuntarily.
-
-
-```{r}
-# Recode NewRole into 3 categories
-
-data <- data %>%
-  mutate(NewRole_3cat = case_when(
-    NewRole %in% c("Somewhat Considered", "Strongly Considered") ~ "Considered",
-    NewRole %in% c("Voluntary Transition", "Involuntary Transition") ~ "Transitioned",
-    NewRole == "No Change" ~ "No Change", TRUE ~ NA_character_
-))
-
-# Plot 3-category distribution
-
+```{r, fig.show='hold'}
 data %>%
-  count(NewRole_3cat) %>%
-  mutate(prop = n / sum(n)) %>%
-  ggplot(aes(x = reorder(NewRole_3cat, prop), y = prop, fill = NewRole_3cat)) +
-  geom_bar(stat = "identity") +
-  labs(title = "Distribution of Career Change (3-Category Target)",
-       x = "Career Change Status", y = "Proportion") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
+  count(NewRole) %>%
+  ggplot(aes(x = NewRole, y = n, fill = NewRole)) +
+  geom_col() +
+  labs(title = "Career Change Distribution", x = "Career Change", y = "Count") +
+  theme_minimal()
 ```
 
-From the bar plot:
+From the plot, there are:
 
-- No Change is the most common category (~33%), indicating many respondents have not considered or transitioned careers.
+-   Change: over 19000 respondents
 
-- Considered accounts for a significant portion (~32%), showing that a substantial fraction of respondents are contemplating career changes.
+-   No Change: over 16000 respondents
 
-- Transitioned is less frequent (~8%), reflecting that actual career transitions are rarer than considerations.
-
-- Approximately 30% of the data are missing (NA).
-
-Overall, the distribution is skewed toward stable careers (No Change), suggesting more respondents have not pursued career changes than those who have considered or actually transitioned.
+Slightly more developers are considering or making a career change than staying in their current role, but the classes are reasonably balanced, which is helpful for modeling.
 
 ### Continuous Variables
 
-We examined continuous variables to understand respondents’ professional experience, coding experience, compensation, and job satisfaction. These variables provide insight into potential factors that may influence career change decisions.
+We explored numeric variables to understand patterns in experience, salary, job satisfaction, and tool usage:
 
-```{r}
-continuous_vars <- c("WorkExp", "YearsCode", "CompTotal", "JobSat")
+-   `WorkExp`: Years of professional experience
+
+-   `ConvertedCompYearly`: Annual salary
+
+-   `JobSat`: Job satisfaction (1–10 scale)
+
+-   `ToolCountWork`: Number of distinct software tools used at work
+
+```{r, fig.show='hold'}
+continuous_vars <- c("WorkExp", "ConvertedCompYearly", "JobSat", "ToolCountWork")
+
 data %>% 
-  select(all_of(continuous_vars)) %>%
+  dplyr::select(all_of(continuous_vars)) %>%
   gather(key = "variable", value = "value") %>%
   filter(!is.na(value)) %>%
   ggplot(aes(x = value)) +
@@ -287,121 +304,674 @@ data %>%
 
 # Log-transformed salary 
 data %>% 
-  filter(!is.na(CompTotal) & CompTotal > 0) %>% 
-  ggplot(aes(x = log(CompTotal))) +
+  filter(!is.na(ConvertedCompYearly) & ConvertedCompYearly > 0) %>% 
+  ggplot(aes(x = log(ConvertedCompYearly))) +
   geom_histogram(bins = 30, fill = "darkblue", color = "white") + 
   labs(title = "Log-Transformed Salary Distribution", 
-       x = "log(CompTotal)", y = "Count") + 
+       x = "log(ConvertedCompYearly)", y = "Count") + 
   theme_minimal()
 ```
 
-Continuous variables include `WorkExp` (years of professional experience), `YearsCode` (years coding), `CompTotal` (annual compensation), and `JobSat` (job satisfaction). Most respondents report 5–20 years of professional experience and 8–24 years of coding experience.
+Observations:
 
-Observations from the histograms:
+-   Most respondents have 2–10 years of experience.
 
-- `CompTotal` (annual compensation) is extremely right-skewed, with the majority earning under \$200k, but with some very large outliers. Because of this skewness, a log transformation is applied to make the distribution more suitable for modeling. After log-transformation, compensation clusters around a more interpretable center (roughly equivalent to salaries in the \$75k–\$120k range), reducing the influence of extreme salary outliers.
+-   Salary is right-skewed (most under \$200k); log transformation helps with interpretation.
 
-- `JobSat` (job satisfaction on a 1–10 scale) is concentrated at the higher end, with a median of 8, suggesting that respondents tend to report positive satisfaction with their jobs.
+-   Job satisfaction is skewed high (median \~7/10), suggesting overall satisfaction.
 
-- `WorkExp` (years of professional experience) shows a heavily right-tailed distribution. Most respondents have between 5 and 20 years of work experience, with a small number reporting very long careers.
-
-- `YearsCode` exhibits a similar right-skewed pattern, with the majority falling between 8 and 24 years of programming experience. This indicates that many respondents began coding early relative to their professional careers.
+-   The number of distinct software tools used at work is left-skewed; most developers report 4–10 tools, with a few using over 30 tools.
 
 ```{r}
 # Correlation matrix 
 numeric_vars <- data %>% 
-  select(all_of(continuous_vars)) %>% 
+  dplyr::select(all_of(continuous_vars)) %>% 
   na.omit() 
 
 cor_matrix <- cor(numeric_vars) 
 print(cor_matrix)
 ```
 
-The correlation matrix shows:
+The numeric predictors show very weak correlations with each other:
 
-- `WorkExp` and `YearsCode`: 0.89 (strong positive relationship), confirming that experience and coding longevity are closely linked.
-- Other correlations with `CompTotal` or `JobSat`: Weak (<0.1), suggesting that salary and job satisfaction are not strongly determined by years of experience or coding alone.
+-   Work experience has a slight positive correlation with salary (0.08) and number of tools used (0.12).
 
-Linking to career change: The skew toward mid- to high-experience respondents, coupled with generally high job satisfaction, may partly explain why the majority of respondents have not transitioned careers. Conversely, the subset considering or making transitions could reflect those with lower satisfaction or particular compensation levels, highlighting potential predictors for career mobility.
+-   Job satisfaction is almost uncorrelated with salary (0.02) and tool count (\~0). Overall, experience, salary, satisfaction, and tool usage are largely independent.
+
+Relation to career change
+
+```{r, fig.show='hold'}
+cont_vars <- c("WorkExp", "JobSat", "ConvertedCompYearly")
+
+plot_data <- data %>%
+  select(NewRole, all_of(cont_vars)) %>%
+  pivot_longer(
+    cols = -NewRole,
+    names_to = "Variable",
+    values_to = "Value"
+  ) %>%
+  filter(!is.na(Value)) %>%
+  mutate(
+    Value = ifelse(
+      Variable == "ConvertedCompYearly",
+      log(Value),
+      Value
+    ),
+    Variable = recode(
+      Variable,
+      WorkExp = "Work Experience (Years)",
+      JobSat = "Job Satisfaction",
+      ConvertedCompYearly = "Log Compensation"
+    )
+  )
+
+ggplot(plot_data, aes(x = NewRole, y = Value, fill = NewRole)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.3) +
+  facet_wrap(~ Variable, scales = "free_y", ncol = 2) +
+  labs(
+    title = "Continuous Predictors by Career Change Status",
+    x = "Career Change",
+    y = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(face = "bold")
+  )
+
+```
+
+- Developers with less experience and lower job satisfaction are more likely to consider changing roles.
+
+- There is a weak indication that developers with lower log compensation are more likely to consider changing roles.
+
 
 ### Categorical Variables
 
-Categorical variables describe demographic, educational, and workplace characteristics of respondents. Examining these variables helps contextualize career trajectories and potential predictors of career change.
+Categorical variables provide context about demographics, education, and workplace features:
 
+```{r, fig.show='hold'}
+cat_groups <- list(
+  Demographics = c("Age", "EdLevel"),
+  Job = c("Employment", "OrgSize", "ICorPM", "RemoteWork"),
+  Attitudes = c("AIThreat")
+)
 
-```{r}
-categorical_vars <- c("Age", "EdLevel", "Employment", "OrgSize", "ICorPM", "RemoteWork", "AIThreat")
-for(var in categorical_vars){
-  print(
-  ggplot(data, aes_string(x = var)) +
-    geom_bar(fill = "coral") +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-    labs(title = paste("Frequency of", var)) +
-    theme_minimal()
-  )
+for (group in names(cat_groups)) {
+
+  plot_data <- data %>%
+    select(NewRole, all_of(cat_groups[[group]])) %>%
+    pivot_longer(
+      cols = -NewRole,
+      names_to = "Variable",
+      values_to = "Value"
+    ) %>%
+    filter(!is.na(Value))
+
+  p <- ggplot(plot_data, aes(x = Value, fill = NewRole)) +
+    geom_bar() +  
+    facet_wrap(~ Variable, scales = "free_x", ncol = 2) +
+    labs(
+      title = paste(group, "Variables by Career Change"),
+      x = NULL,
+      y = "Proportion"
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "bottom",
+      strip.text = element_text(face = "bold")
+    )
+
+  print(p)
 }
 ```
 
--   `Age`: Most respondents are between 25–44 years old, with fewer older professionals (65+) or those preferring not to disclose.
+Observations:
 
--   `EdLevel` (Education Level): Majority hold a Bachelor’s or Master’s degree , followed by professional degrees and some college.
+-   Age: Younger professionals (25–44) are more likely to consider career change.
 
--   `Employment`: Most are employed, with smaller fractions of contractors/freelancers, students, and others.
+-   Education: Those with bachelor’s or master’s degrees are more likely to consider or have changed roles.
 
--   `OrgSize` (Organization Size): Respondents are concentrated in small-to-medium companies (20–499 employees), with fewer in very large companies or solo/freelance.
+-   Employment type, organization size & role type: No strong influence on career change.
 
--   `ICorPM` (Individual contributor vs manager): Majority are individual contributors.
+-   Remote work: Flexible or remote arrangements are associated with stability.
 
--   `RemoteWork`: Mostly remote or hybrid options, reflecting flexible work arrangements.
+-   AI threat perception: Those perceiving AI threat are more likely to consider change.
 
--   `AIThreat` Awareness: Responses are split, with a majority reporting No, followed by I'm not sure and Yes.
+For variables with many categories like Industry and Developer Type, the top categories dominate:
 
-
-```{r}
+```{r, fig.show='hold'}
 top_n <- 10
-large_cats <- c("Country", "Industry", "DevType")
+large_cats <- c("Industry", "DevType")
+
+plots <- list()  
+
 for(var in large_cats){
   top_values <- data %>%
     filter(!is.na(.data[[var]])) %>%
-    count(.data[[var]]) %>%
-    top_n(top_n, n)
+    count(value = .data[[var]]) %>%
+    slice_max(n, n = top_n)
   
-  print(
-  ggplot(top_values, aes(x = reorder(.data[[var]], n), y = n)) +
-    geom_bar(stat = "identity", fill = "darkgreen") +
+  p <- ggplot(top_values, aes(x = reorder(value, n), y = n)) +
+    geom_col(fill = "darkgreen") +
     coord_flip() +
-    labs(title = paste("Top", top_n, "categories in", var), y = "Count") +
-    theme_minimal()
-  )
+    labs(title = paste("Top", top_n, "categories in", var), x = NULL, y = "Count") +
+    theme_minimal(base_size = 12)
+  
+  plots[[var]] <- p 
 }
+
+# Combine plots in a grid
+grid.arrange(grobs = plots, ncol = 1) 
 
 ```
 
-- `Country`: Most respondents come from the United States, Germany, India, the United Kingdom, France, and Canada, indicating a strong geographic concentration in major tech-active regions.
+-   `Industry`: Responses are dominated by Software Development, Internet/Information Services, Telecommunications, FinTech, Banking/Financial Services, and Healthcare, showing that participants are primarily employed in tech-driven and professional sectors.
 
-- `Industry`: Responses are dominated by Software Development, Internet/Information Services, Telecommunications, FinTech, Banking/Financial Services, and Healthcare—showing that participants are primarily employed in tech-driven and professional sectors.
+-   `DevType` (Developer Type): The most common roles include Full-Stack Developers, Back-End Developers, Front-End Developers, Software/Solutions Architects, and Students, reflecting a respondent pool centered around core development and engineering positions.
 
-- `DevType` (Developer Type): The most common roles include Full-Stack Developers, Back-End Developers, Front-End Developers, Software/Solutions Architects, and Students, reflecting a respondent pool centered around core development and engineering positions.
+### Summary Insights
 
-### Summary Insight
+-   About 54% of respondents are considering or have already changed careers, while 46% have stayed in their current roles. The classes are fairly balanced.
 
-- Career change is considered by a substantial portion (~32%), but actual transitions (~8%) are less frequent; the majority (~33%) have not changed careers.
+-   Most respondents are new or mid-career developers who have worked for several years and generally report high job satisfaction.
 
-- Respondents are primarily mid-career professionals with technical skills, employed in small-to-medium tech-related companies, and reporting relatively high job satisfaction.
+-   Work experience and the number of tools used at work are only weakly correlated with compensation and job satisfaction. 
 
-- Salary and job satisfaction show little correlation with experience or coding longevity, suggesting other factors influence these outcomes.
+-   Career mobility appears to be influenced more by factors like experience, satisfaction, age, and work context (e.g., remote flexibility, employment type) rather than salary.
 
-- Respondents are geographically concentrated in major tech regions (US, India, Germany), working in software or IT-related sectors, mostly in developer roles.
+Overall, the dataset represents a technically skilled and fairly experienced workforce, with a significant subset actively considering or undergoing career transitions.
 
-Overall, the dataset reflects a sample of stable, experienced, and technically skilled professionals, with a subset contemplating or undertaking career changes.
+## `r Q <- Q+1; Q`. Model Selection
 
-## `r Q <- Q+1; Q`. Preprocessing
+Our goal is to predict whether a developer is likely to consider or make a career change (`NewRole`). Since this is a binary outcome (`Change` vs `No_Change`) and most predictors are categorical, we focused on models that handle categorical data well:
 
+-   Naive Bayes – A simple probabilistic model that’s easy to interpret and provides a quick baseline.
+
+-   Logistic Regression – Handles multiple predictors and gives interpretable coefficients in terms of odds ratios.
+
+-   Random Forests – Captures non-linear relationships, works naturally with categorical variables, and reduces variance by averaging across multiple decision trees.
+
+We skipped distance-based models like K-Nearest Neighbors because they perform poorly with many categorical variables. These three models give a good mix of interpretability and predictive performance.
 
 ## `r Q <- Q+1; Q`. Modeling
 
+### Data Preprocessing & Train-Test Split
+
+Before training models, we handled missing values and prepared the dataset:
+
+-   Categorical variables: Missing values were replaced with "Unknown".
+
+-   Numeric variables: Missing values were filled with the median, which is robust to skewed distributions.
+
+We then split the data into training (70%) and testing (30%) sets, ensuring the target variable’s reference level is No_Change, so that we could make sure our models are predicting if a developer is likely to consider career change (positive class = Change).
+
+Since compensation is really skewed, we’ll log-transform it for logistic regression and Naive Bayes to make the models work better, but we’ll keep the original values for Random Forest because it handles skewed data fine.
+
+```{r}
+# Handle missing values and drop the old NewRole col
+data <- data %>%
+  mutate(across(where(is.factor), ~ fct_explicit_na(., "Unknown")),
+         across(where(is.numeric), ~ ifelse(is.na(.), median(., na.rm = TRUE), .))) 
+
+# Train-test split
+set.seed(123)
+train_idx <- createDataPartition(data$NewRole, p = 0.7, list = FALSE)
+train <- data[train_idx, ]
+test  <- data[-train_idx, ]
+
+train$NewRole <- relevel(train$NewRole, ref = "No_Change")
+test$NewRole  <- relevel(test$NewRole, ref = "No_Change")
+
+train_nb_logit <- train %>%
+  mutate(log_compensation = log(ConvertedCompYearly)) %>%
+  select(-ConvertedCompYearly)
+test_nb_logit <- test %>%
+  mutate(log_compensation = log(ConvertedCompYearly)) %>%
+  select(-ConvertedCompYearly)
+```
+
+### Naives Bayes
+
+Naive Bayes serves as a simple baseline model. It assumes independence among predictors and calculates probabilities for each class.
+
+```{r}
+set.seed(123)
+
+# Train Naive Bayes
+ctrl <- trainControl(
+  method = "repeatedcv", 
+  number = 5, 
+  repeats = 10,
+  summaryFunction = twoClassSummary,
+  classProbs = TRUE,
+  savePredictions = "final"
+)
+
+nb_model <- train(
+  NewRole ~ ., data = train_nb_logit, 
+  method = "naive_bayes",
+  metric = "ROC",
+  tuneLength = 10,
+  trControl = ctrl
+)
+
+# Confusion matrix
+nb_pred <- predict(nb_model, test_nb_logit)
+confusionMatrix(nb_pred, test_nb_logit$NewRole, positive = "Change")
+
+# ROC curve
+nb_probs <- predict(nb_model, test_nb_logit, type = "prob")[, "Change"]
+
+roc_obj <- pROC::roc(
+  response  = test_nb_logit$NewRole,
+  predictor = nb_probs,
+  levels    = rev(levels(test_nb_logit$NewRole))
+)
+
+plot(roc_obj, print.auc = TRUE, main = "Naive Bayes ROC curve")
+
+```
+
+### Logistic Regression
+
+Logistic regression estimates the probability of a career change using a linear combination of predictors. To classify developers, we select an optimal probability cutoff based on cross-validated predictions, choosing the threshold that maximizes Youden’s J, rather than using the default 0.5.
+
+```{r}
+set.seed(123)
+
+# Train logistic regression
+logit_model <- train(
+  NewRole ~ ., 
+  data = train_nb_logit,
+  method = "glm",
+  family = binomial(),
+  metric = "ROC",
+  trControl = ctrl
+)
+
+cv_preds <- logit_model$pred
+
+# ROC based on CV predictions
+roc_cv <- pROC::roc(
+  response  = cv_preds$obs,
+  predictor = cv_preds$Change,  # predicted probability of 'Change'
+  levels    = rev(levels(cv_preds$obs))
+)
+
+# Optimal threshold based on Youden's J (maximize overall accuracy)
+cutoff <- coords(roc_cv, "best", ret = "threshold")$threshold
+
+cutoff
+
+# Visualize ROC curve with best threshold
+plot(roc_cv, print.auc = TRUE, print.thres = "best",
+     main = "Logistic Regression ROC (CV-based cutoff)")
+```
+
+
+```{r}
+# Predicted probabilities on test set
+test_probs <- predict(logit_model, test_nb_logit, type = "prob")[, "Change"]
+
+# Apply Sensitivity-optimal cutoff
+pred_test <- factor(ifelse(test_probs > cutoff, "Change", "No_Change"),
+                      levels = levels(test_nb_logit$NewRole))
+
+# Confusion matrices
+cm_test <- confusionMatrix(pred_test, test_nb_logit$NewRole, positive = "Change")
+
+cm_test
+
+```
+
+#### Odd-ratio Summary
+
+```{r}
+# Odd-ratio summary
+logit_model_glm <- logit_model$finalModel
+logit_summary <- tidy(logit_model_glm, exponentiate = TRUE, conf.int = TRUE)
+
+DT::datatable(
+  logit_summary,
+  options = list(
+    pageLength = 10,       # show 10 rows per page
+    scrollX = TRUE          # horizontal scroll for wide tables
+  )
+)
+```
+
+Observations:
+
+- Demographics: Younger developers (ages 25–44) are more likely to switch jobs, while older developers (55+) are less likely. Education level doesn’t seem to have an impact, but more work experience noticeably reduces the odds of switching.
+
+- Job factors: Job satisfaction lowers the likelihood of switching. Certain roles, such as data or business analysts, full-stack developers, desktop or enterprise application developers, and students, tend to switch less. Freelancers or solo workers are more likely to change jobs. Organization size doesn’t appear to have a significant effect, and developers in the software development industry are slightly less likely to leave, while other industries show no clear effect. Using a greater number of distinct tools at work, reflecting higher job complexity, significantly increases switching likelihood.
+
+- Compensation: Higher log-transformed compensation is associated with a lower probability of switching.
+
+- Attitudinal factors: Job satisfaction clearly reduces switching, whereas perceiving AI as a threat significantly increases the likelihood of leaving.
+
+### Random Forest
+
+We train a Random Forest to predict career change, using ROC-based cross-validation to optimize the probability threshold for detecting developers likely to change roles. 
+
+```{r, warning=FALSE}
+set.seed(123)
+
+# Train Random Forest
+rf_ctrl <- trainControl(
+  method = "cv",
+  number = 3,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary  # Needed for ROC
+)
+
+rf_model <- train(
+  NewRole ~ ., 
+  data = train, 
+  method = "ranger", 
+  metric = "ROC",
+  tuneLength = 5,
+  trControl = rf_ctrl,
+  importance = "impurity",
+  verbose = FALSE
+)
+
+# Predict probabilities on the test set
+rf_probs <- predict(rf_model, test, type = "prob")[, "Change"]
+
+# ROC curve and optimal threshold selection
+roc_rf <- roc(response = test$NewRole, 
+              predictor = rf_probs, 
+              levels = rev(levels(test$NewRole)))
+
+# Best cutoff using Youden's J
+rf_cutoff <- coords(roc_rf, "best", ret = "threshold")$threshold
+rf_cutoff
+
+# Apply optimal cutoff
+rf_pred_opt <- factor(ifelse(rf_probs > rf_cutoff, "Change", "No_Change"),
+                      levels = levels(test$NewRole))
+
+# Confusion matrix using optimized threshold
+confusionMatrix(rf_pred_opt, test$NewRole, positive = "Change")
+
+# Plot ROC with threshold
+plot(roc_rf, print.auc = TRUE, print.thres = TRUE,
+     main = paste("Random Forest ROC (cutoff =", round(rf_cutoff, 2), ")"))
+```
+
+#### Feature importance
+
+```{r}
+# Extract variable importance from the trained Random Forest
+rf_varimp <- varImp(rf_model, scale = TRUE)$importance
+
+# Add variable names as a column
+rf_varimp <- data.frame(
+  Variable = rownames(rf_varimp),
+  Overall  = rf_varimp$Overall,
+  stringsAsFactors = FALSE
+)
+
+# Automatically map dummies back to original variables
+map_to_orig <- function(var_name, predictors) {
+  matches <- predictors[sapply(predictors, function(p) startsWith(as.character(var_name), as.character(p)))]
+  if(length(matches) > 0) return(matches[which.max(nchar(matches))]) else return(var_name)
+}
+
+predictors <- names(train)[names(train) != "NewRole"]
+rf_varimp$OrigVar <- sapply(rf_varimp$Variable, map_to_orig, predictors = predictors)
+
+# Aggregate importance per original variable (mean across dummies)
+agg_varimp <- rf_varimp %>%
+  group_by(OrigVar) %>%
+  summarise(Importance = mean(Overall, na.rm = TRUE)) %>%
+  arrange(desc(Importance))
+
+# Plot top 10
+top_varimp <- agg_varimp[1:10, ]
+
+ggplot(top_varimp, aes(x = reorder(OrigVar, Importance), y = Importance)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Top 10 Random Forest Feature Importance (Aggregated)",
+       x = "Feature",
+       y = "Mean Importance") +
+  theme_minimal()
+```
+
+Job satisfaction, work experience, compensation, and AI threat perception are top predictors.
+
+### Drop Job satisfaction
+
+Since job satisfaction is highly predictive of career change and can dominate other factors, we remove it to better explore the influence of other variables on career mobility.
+
+```{r}
+# Drop JobSat
+data$JobSat <- NULL
+train$JobSat <- NULL
+test$JobSat <- NULL
+
+train_nb_logit$JobSat <- NULL
+test_nb_logit$JobSat <- NULL
+```
+
+#### Naives Bayes
+
+```{r}
+set.seed(123)
+
+ctrl <- trainControl(
+  method = "repeatedcv", 
+  number = 5, 
+  repeats = 10,
+  summaryFunction = twoClassSummary,
+  classProbs = TRUE,
+  savePredictions = "final"
+)
+
+nb_model <- train(
+  NewRole ~ ., 
+  data = train_nb_logit, 
+  method = "naive_bayes",
+  metric = "ROC",
+  tuneLength = 10,
+  trControl = ctrl
+)
+
+# Predictions and evaluation
+nb_pred <- predict(nb_model, test_nb_logit)
+confusionMatrix(nb_pred, test_nb_logit$NewRole, positive = "Change")
+
+nb_probs <- predict(nb_model, test_nb_logit, type = "prob")[, "Change"]
+
+roc_nb <- roc(response = test_nb_logit$NewRole, predictor = nb_probs, levels = rev(levels(test_nb_logit$NewRole)))
+plot(roc_nb, print.auc = TRUE, main = "Naive Bayes ROC (without JobSat)")
+
+```
+
+#### Logistic Regression (CV-Based Cutoff)
+
+```{r}
+# Train logistic regression
+set.seed(123)
+logit_model <- train(
+  NewRole ~ ., 
+  data = train_nb_logit,
+  method = "glm",
+  family = binomial(),
+  metric = "ROC",
+  trControl = ctrl
+)
+
+# Extract CV predictions
+cv_preds <- logit_model$pred
+
+# ROC based on CV predictions
+roc_cv <- roc(
+  response  = cv_preds$obs,
+  predictor = cv_preds$Change,  # predicted probability of 'Change'
+  levels    = rev(levels(cv_preds$obs))
+)
+
+# Optimal threshold based on Youden's J (maximize overall accuracy)
+cutoff <- coords(roc_cv, "best", ret = "threshold")$threshold
+cutoff
+
+# Predict probabilities on the test set
+logit_probs_test <- predict(logit_model, newdata = test_nb_logit, type = "prob")[, "Change"]
+
+# Apply optimal cutoff to classify
+pred_test <- factor(
+  ifelse(logit_probs_test > cutoff, "Change", "No_Change"),
+  levels = levels(test_nb_logit$NewRole)
+)
+
+# Confusion matrix using CV-based cutoff
+cm_test <- confusionMatrix(pred_test, test_nb_logit$NewRole, positive = "Change")
+cm_test
+
+# Plot ROC with threshold
+plot(roc_cv, print.auc = TRUE, print.thres = "best",
+     main = "Logistic Regression ROC (CV-based cutoff, without JobSat)")
+
+```
+
+```{r, echo=FALSE, results='hide'}
+# Log-odds summary
+summary(logit_model)
+```
+
+Even without job satisfaction, the logistic regression model highlights similar patterns, showing how demographics, experience, and work-context factors relate to career change intentions
+
+#### Random Forest
+
+```{r, warning=FALSE}
+set.seed(123)
+
+rf_ctrl <- trainControl(
+  method = "cv",
+  number = 3,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary
+)
+
+rf_model <- train(
+  NewRole ~ ., 
+  data = train, 
+  method = "ranger", 
+  metric = "ROC",
+  tuneLength = 5,
+  trControl = rf_ctrl,
+  importance = "impurity",
+  verbose = FALSE
+)
+
+rf_probs <- predict(rf_model, test, type = "prob")[, "Change"]
+
+# ROC and optimal cutoff
+roc_rf <- roc(response = test$NewRole, predictor = rf_probs, levels = rev(levels(test$NewRole)))
+rf_cutoff <- coords(roc_rf, "best", ret = "threshold")$threshold
+
+rf_pred_opt <- factor(ifelse(rf_probs > rf_cutoff, "Change", "No_Change"),
+                      levels = levels(test$NewRole))
+
+confusionMatrix(rf_pred_opt, test$NewRole, positive = "Change")
+
+plot(roc_rf, print.auc = TRUE, print.thres = TRUE,
+     main = paste("Random Forest ROC (cutoff =", round(rf_cutoff, 2), ", without JobSat)"))
+
+# Variable importance
+rf_varimp <- varImp(rf_model, scale = TRUE)$importance
+rf_varimp <- data.frame(Variable = rownames(rf_varimp), Overall = rf_varimp$Overall, stringsAsFactors = FALSE)
+
+map_to_orig <- function(var_name, predictors) {
+  matches <- predictors[sapply(predictors, function(p) startsWith(as.character(var_name), as.character(p)))]
+  if(length(matches) > 0) return(matches[which.max(nchar(matches))]) else return(var_name)
+}
+
+predictors <- names(train)[names(train) != "NewRole"]
+rf_varimp$OrigVar <- sapply(rf_varimp$Variable, map_to_orig, predictors = predictors)
+
+agg_varimp <- rf_varimp %>%
+  group_by(OrigVar) %>%
+  summarise(Importance = mean(Overall, na.rm = TRUE)) %>%
+  arrange(desc(Importance))
+
+top_varimp <- agg_varimp[1:10, ]
+
+ggplot(top_varimp, aes(x = reorder(OrigVar, Importance), y = Importance)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Top 10 Random Forest Features (without JobSat)",
+       x = "Feature", y = "Mean Importance") +
+  theme_minimal()
+```
+
+Work experience, compensation, the number of tools used and AI threat perception are top predictors.
+
 ## `r Q <- Q+1; Q`. Evaluation
 
-## `r Q <- Q+1; Q`. Conclusions & recommendations
+### Model Performance (Including Job Satisfaction)
 
-## `r Q <- Q+1; Q`.
+-   Naive Bayes: Accuracy = 0.62, Sensitivity = 0.70, Specificity = 0.53, Balanced Accuracy = 0.61, AUC = 0.660
+
+-   Logistic Regression (cutoff = 0.523): Accuracy = 0.63, Sensitivity = 0.65, Specificity = 0.62, Balanced Accuracy = 0.64, AUC = 0.669
+
+-   Random Forest (cutoff = 0.55): Accuracy = 0.630, Sensitivity = 0.621, Specificity = 0.641, Balanced Accuracy = 0.631, AUC = 0.676
+
+All three models perform pretty similarly, but with some trade-offs. Naive Bayes predicts the most developers who will switch jobs (highest sensitivity) but also mislabels more who stay. Logistic Regression is more balanced between catching changers and staying developers, and it’s easy to interpret. Random Forest has the best overall discrimination (highest AUC) but misses more changers than the other two.
+
+Since predicting developers who switch is our main goal, Naive Bayes and Logistic Regression seem like the better choices. Naive Bayes is fast and does the best job at predicting who might switch, while Logistic Regression is more balanced and also lets us see which factors increase or decrease the odds of switching.
+
+### Models Excluding Job Satisfaction
+
+-   Naive Bayes: Accuracy = 0.58, Sensitivity = 0.7, Specificity = 0.47, Balanced Accuracy = 0.57, AUC = 0.607
+
+-   Logistic Regression (cutoff = 0.526): Accuracy = 0.60, Sensitivity = 0.63, Specificity = 0.56, Balanced Accuracy = 0.60, AUC = 0.615
+
+-   Random Forest (cutoff = 0.54): Accuracy = 0.597, Sensitivity = 0.650, Specificity = 0.533, Balanced Accuracy = 0.592, AUC = 0.628
+
+When we exclude job satisfaction, all models drop slightly in performance, showing that it was a strong predictor. Even without it, Naive Bayes and Logistic Regression still do a decent job. Naive Bayes keeps the highest sensitivity, so it’s still best for predicting developers likely to switch, while Logistic Regression remains more balanced and interpretable, letting us see which other factors influence switching. Random Forest performs reasonably well but doesn’t offer the same interpretability or sensitivity advantage.
+
+### Overall Results
+
+- Demographics: Younger developers (ages 25–44) are more likely to switch jobs, while older developers (55+) are less likely. Education level doesn’t appear to have an impact, but more work experience noticeably reduces the odds of switching.
+
+- Job factors: Job satisfaction lowers the likelihood of switching. Certain roles, such as data or business analysts, full-stack developers, desktop or enterprise application developers, and students, tend to switch less, while freelancers or solo workers are more likely to change jobs. Organization size doesn’t seem to matter, and developers in the software development industry are slightly less likely to leave, while other industries show no clear effect. Using a greater number of distinct tools at work, reflecting higher job complexity, significantly increases the likelihood of switching.
+
+- Compensation: Higher log-transformed compensation is associated with a lower probability of switching.
+
+- Attitudinal factors: Job satisfaction clearly reduces switching, whereas perceiving AI as a threat significantly increases the likelihood of leaving.
+
+Across both modeling settings, Logistic Regression and Naive Bayes generally outperform Random Forest, particularly when sensitivity is prioritized. Logistic Regression offers strong interpretability, helping clarify how different developer characteristics relate to career mobility, while remaining balanced and maintaining high sensitivity, even when job satisfaction is excluded. Naive Bayes achieves the highest sensitivity, making it especially useful for identifying developers likely to switch.
+
+No single model dominates across all metrics, but the results show that developer career change intentions can still be predicted reasonably well even without explicit job satisfaction data. This has practical implications: when satisfaction is unobserved or uncollected, organizations can rely on observable characteristics to identify employees at higher risk of turnover and implement targeted retention strategies.
+
+Overall, this project demonstrates that career mobility among developers is shaped by a combination of experience, demographics, and work context, and that machine learning models, particularly Logistic Regression and Random Forest, can provide meaningful insights into these dynamics.
+
+## `r Q <- Q+1; Q`.Limitations
+
+-   The analysis relies on survey responses, which may be subject to reporting bias and measurement error. Important factors influencing career change decisions may be missing or imperfectly measured.
+
+-  The models capture associations and predictive patterns rather than causal relationships. Results should be interpreted as correlational, not evidence that any factor directly causes career changes.
+
+-   The study focuses on internal and observable characteristics (e.g., demographics, job attributes, perceptions). External influences, such as better job offers, labor market conditions, company layoffs, visa constraints, or personal life events, are not captured but may strongly affect career mobility.
+
+## `r Q <- Q+1; Q`. Conclusions & Recommendations
+
+This project shows that developer career change intentions can be reasonably predicted using a combination of demographic, experiential, and work-context variables. Job satisfaction emerges as the strongest predictor, but even when it is excluded, models still perform moderately well, suggesting that career mobility is influenced by multiple interacting factors.
+
+Among the models tested, Naive Bayes and Logistic Regression offer the best balance of performance and practical usefulness. Logistic Regression provides clear interpretability, helping understand which characteristics are associated with higher turnover risk, while Naive Bayes delivers higher sensitivity and more robust predictions for identifying developers likely to consider a role change.
+
+Recommendations:
+
+- Organizations should monitor not only job satisfaction but also factors such as experience level, role type, workload, and perceptions of technological disruption (e.g., AI threat).
+
+- When satisfaction data is unavailable, predictive models using observable characteristics can still help flag employees at higher risk of leaving.
+
+- Future research could include external labor market data, longitudinal surveys, or causal methods to better understand why developers change careers and how interventions may reduce unwanted turnover.
+
+Overall, these findings highlight that data-driven approaches can support proactive talent management, enabling more targeted retention strategies and informed decision-making within technical teams.

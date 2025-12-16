@@ -9,7 +9,8 @@ This project analyzes data from the Stack Overflow 2025 Developer Survey to exam
 ## Folder Structure
 
 ### Data Folder (`data/`)
-- **survey_results_public.csv**: Cleaned subset of the 2025 Stack Overflow Developer Survey.  
+The dataset is too large to include in this repository. It is the **Stack Overflow Developer Survey 2025**, available [here](https://survey.stackoverflow.co). The survey includes these files: 
+- **survey_results_public.csv**: The 2025 Stack Overflow Developer Survey.  
 - **survey_results_schema.csv**: Description of all variables in the dataset.  
 - **2025_Developer_Survey_Tool.pdf**: Survey methodology and documentation.
 

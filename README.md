@@ -1,6 +1,6 @@
 # Employee Attrition Prediction
 
-**DA 352 – Final Project**
+Analyzes the Stack Overflow 2025 Developer Survey to find what drives developers to consider a career change. Compares Logistic Regression, Naive Bayes and Random Forest models; job satisfaction, age and experience stand out as top predictors.
 
 ## Overview
 
